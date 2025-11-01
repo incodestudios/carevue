@@ -1,0 +1,15 @@
+@hostname = http://localhost:9023
+
+get {{hostname}}
+
+###
+get {{hostname}}/api/agency/patients
+
+### 
+get {{hostname}}/api/agency/caregivers
+
+###
+get {{hostname}}/api/agency/patients/1/caregivers
+
+###
+post {{hostname}}/api/agency/patients

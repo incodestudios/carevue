@@ -1,11 +1,22 @@
 {
   "name": "carevue",
   "version": "1.0.0",
-  "description": "CareVue is an all-in-one home-care platform that gives agencies real-time visibility into every client’s care",
+  "description": "CareVue is an all-in-one home-care platform that gives agencies real-time visibility into every client's care",
+  "type": "module",
   "main": "index.js",
   "scripts": {
+    "start": "nodemon index.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "Ose Agbadu",
-  "license": "ISC"
+  "license": "ISC",
+  "dependencies": {
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.19.2",
+    "morgan": "^1.10.1",
+    "nodemon": "^3.1.10",
+    "stripe": "^19.2.0"
+  }
 }
