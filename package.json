@@ -1,0 +1,11 @@
+{
+  "name": "carevue",
+  "version": "1.0.0",
+  "description": "CareVue is an all-in-one home-care platform that gives agencies real-time visibility into every client’s care",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Ose Agbadu",
+  "license": "ISC"
+}
