@@ -3,6 +3,8 @@ import auth from "../middlewares/auth.js";
 import requireRole from "../middlewares/requireRole.js";
 import Agency from "../models/Agency.js";
 import User from "../models/User.js";
+import bcrypt from "bcrypt";
+import generateToken from "../utils/generateToken.js";
 
 import { Router } from "express";
 const router = Router();
@@ -24,10 +26,14 @@ router.get("/:id", auth, requireRole("super_admin"), async (req, res) => {
 router.post("/", auth, requireRole("super_admin"), async (req, res) => {
   const { name, subdomain, ownerEmail, plan } = req.body;
 
+  const password = "TEMP_PASSWORD";
+
+  const passwordHash = await bcrypt.hash(password, 15);
+
   // 1) create agency_super_admin user (invited)
   const user = await User.create({
     email: ownerEmail,
-    passwordHash: "TEMP", // you will send invite / reset
+    passwordHash: passwordHash, // you will send invite / reset
     role: "agency_super_admin",
     status: "invited",
   });
@@ -61,6 +67,43 @@ router.put("/:id/status", auth, requireRole("super_admin"), async (req, res) => 
   );
   if (!agency) return res.status(404).json({ message: "Not found" });
   res.json(agency);
+});
+
+router.post("/login", async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    const user = await User.findOne({ email: email.toLowerCase() });
+    if (!user) {
+      return res.status(401).json({ message: "Invalid credentials" });
+    }
+
+    const isMatch = await bcrypt.compare(password, user.passwordHash);
+    if (!isMatch) {
+      return res.status(401).json({ message: "Invalid credentials" });
+    }
+
+    if (user.status !== "active" && user.status !== "invited") {
+      return res.status(403).json({ message: "User is not active" });
+    }
+
+    const token = generateToken(user);
+
+    res.json({
+      message: "Agency Login successful",
+      token,
+      user: {
+        id: user._id,
+        email: user.email,
+        role: user.role,
+        status: user.status,
+        agencyId: user.agencyId,
+      },
+    });
+  } catch (err) {
+    console.error("Login error:", err);
+    res.status(500).json({ message: "Server error" });
+  }
 });
 
 export default router;
