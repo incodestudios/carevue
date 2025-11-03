@@ -1,4 +1,6 @@
 import express from "express";
+import cors from 'cors';
+import helmet from 'helmet';
 import superAgenciesRouter from "./routes/super.agencies.js";
 import agencyAdminRouter from "./routes/agency.admin.js";
 import agencyCareGiverRouter from "./routes/agency.caregivers.js";
@@ -16,10 +18,38 @@ mongoose
 
 const app = express();
 
-// Middleware
+// Security Middleware - Helmet configuration
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "'unsafe-inline'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", "data:", "https:"],
+        connectSrc: ["'self'", process.env.FRONTEND_URL]
+      },
+    },
+    crossOriginEmbedderPolicy: false, // Allows loading resources from approved origins
+    crossOriginResourcePolicy: { policy: "cross-origin" }, // Enables cross-origin resource sharing
+    referrerPolicy: { policy: "strict-origin-when-cross-origin" } // Controls how much referrer information is included
+  })
+);
+
+// CORS Configuration
+const corsOptions = {
+  origin: process.env.FRONTEND_URL,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true,
+  maxAge: 86400 // 24 hours
+};
+app.use(cors(corsOptions));
+
+// Body Parsing Middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(morgan('dev'))
+app.use(morgan('dev'));
 
 // Routes
 app.get('/', (req, res) => {
