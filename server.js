@@ -27,22 +27,25 @@ app.use(
         scriptSrc: ["'self'", "'unsafe-inline'"],
         styleSrc: ["'self'", "'unsafe-inline'"],
         imgSrc: ["'self'", "data:", "https:"],
-        connectSrc: ["'self'", process.env.FRONTEND_URL]
+        connectSrc: ["'self'", "https:", "http:", "ws:", "wss:"]
       },
     },
-    crossOriginEmbedderPolicy: false, // Allows loading resources from approved origins
-    crossOriginResourcePolicy: { policy: "cross-origin" }, // Enables cross-origin resource sharing
-    referrerPolicy: { policy: "strict-origin-when-cross-origin" } // Controls how much referrer information is included
+    crossOriginEmbedderPolicy: false,
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+    referrerPolicy: { policy: "strict-origin-when-cross-origin" }
   })
 );
 
 // CORS Configuration
 const corsOptions = {
-  origin: process.env.FRONTEND_URL,
+  origin: ['http://localhost:5173', 'http://localhost:3000', process.env.FRONTEND_URL].filter(Boolean),
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+  exposedHeaders: ['Content-Range', 'X-Content-Range'],
   credentials: true,
-  maxAge: 86400 // 24 hours
+  maxAge: 86400, // 24 hours
+  preflightContinue: false,
+  optionsSuccessStatus: 204
 };
 app.use(cors(corsOptions));
 
@@ -63,6 +66,6 @@ app.use("/api/agency/caregivers", agencyCareGiverRouter);
 app.use("/api/agency/patients", agencyPatientsRouter);
 app.use("/api/agency", agencyAssignmentsRouter);
 app.use("/api/stripe", agencyStripeWebhook);
-//app.use("/api/users", require("./routes/userRoutes"));
+//app.use("/api/users", require("./routes/userRoutes"))
 
 export default app;
