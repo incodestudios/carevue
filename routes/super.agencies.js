@@ -24,7 +24,40 @@ router.get("/:id", auth, requireRole("super_admin"), async (req, res) => {
 
 // POST /api/super/agencies  (manual create)
 router.post("/", auth, requireRole("super_admin"), async (req, res) => {
-  const { name, subdomain, ownerEmail, plan } = req.body;
+  // Guard against missing/invalid JSON body
+  if (!req.body || typeof req.body !== "object") {
+    return res.status(400).json({
+      message: "Request body is required. Ensure 'Content-Type: application/json' is set.",
+    });
+  }
+
+  const {
+    agencyName,
+    subdomain,
+    plan,
+    // New Agency model fields
+    profileImage,
+    firstName,
+    middleName,
+    lastName,
+    dob,
+    companyName,
+    contactMobile,
+    phone,
+    email,
+    addressLine1,
+    addressLine2,
+    zipCode,
+    notes,
+  } = req.body ?? {};
+
+  // Basic required fields validation
+  if (!agencyName || !subdomain) {
+    return res.status(400).json({
+      message: "Missing required fields",
+      required: ["agencyName", "subdomain", "ownerEmail"],
+    });
+  }
 
   const password = "TEMP_PASSWORD";
 
@@ -32,7 +65,7 @@ router.post("/", auth, requireRole("super_admin"), async (req, res) => {
 
   // 1) create agency_super_admin user (invited)
   const user = await User.create({
-    email: ownerEmail,
+    email: email.toLowerCase(),
     passwordHash: passwordHash, // you will send invite / reset
     role: "agency_super_admin",
     status: "invited",
@@ -40,13 +73,27 @@ router.post("/", auth, requireRole("super_admin"), async (req, res) => {
 
   // 2) create agency in pending_payment
   const agency = await Agency.create({
-    name,
+    agencyName,
     subdomain,
     status: "pending_payment",
     billingStatus: "none",
     plan: plan || "pro",
     ownerUserId: user._id,
     createdBy: req.user.id,
+    // Map new fields into Agency document
+    profileImage,
+    firstName,
+    middleName,
+    lastName,
+    dob,
+    companyName,
+    contactMobile,
+    phone,
+    email,
+    addressLine1,
+    addressLine2,
+    zipCode,
+    notes,
   });
 
   // 3) update user with agencyId

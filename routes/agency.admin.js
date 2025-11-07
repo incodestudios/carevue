@@ -25,6 +25,16 @@ router.get("/", auth, agencyScope, async (req, res) => {
   return res.json(admins);
 });
 
+// GET /api/super/agencies/:id
+router.get("/:id", auth, agencyScope, async (req, res) => {
+  const agencyAdmin = await User.findById({
+    _id: req.params.id,
+    agencyId: req.agencyId,
+  }).lean();
+  if (!agencyAdmin) return res.status(404).json({ message: "Not found" });
+  res.json(agencyAdmin);
+});
+
 // POST /api/agency/admin
 // create a new agency admin inside this agency
 router.post("/register", auth, agencyScope, async (req, res) => {
