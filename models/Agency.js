@@ -3,7 +3,7 @@ import mongoose from "mongoose";
 
 const AgencySchema = new mongoose.Schema(
   {
-    name: {
+    agencyName: {
       type: String,
       required: true,
       trim: true,
@@ -27,6 +27,59 @@ const AgencySchema = new mongoose.Schema(
     plan: {
       type: String,
       default: "pro", // free | starter | pro | enterprise
+    },
+    // Contact & profile details
+    profileImage: {
+      type: String,
+      trim: true,
+    },
+    firstName: {
+      type: String,
+      trim: true,
+    },
+    middleName: {
+      type: String,
+      trim: true,
+    },
+    lastName: {
+      type: String,
+      trim: true,
+    },
+    dob: {
+      type: Date,
+    },
+    companyName: {
+      type: String,
+      trim: true,
+    },
+    contactMobile: {
+      type: String,
+      trim: true,
+    },
+    phone: {
+      type: String,
+      trim: true,
+    },
+    email: {
+      type: String,
+      lowercase: true,
+      trim: true,
+    },
+    addressLine1: {
+      type: String,
+      trim: true,
+    },
+    addressLine2: {
+      type: String,
+      trim: true,
+    },
+    zipCode: {
+      type: String,
+      trim: true,
+    },
+    notes: {
+      type: String,
+      trim: true,
     },
     stripeCustomerId: {
       type: String,
