@@ -19,6 +19,29 @@ router.get("/", auth, agencyScope, async (req, res) => {
   res.json(caregivers);
 });
 
+router.get("/:id", auth, agencyScope, async (req, res) => {
+  const { id } = req.params;
+  try {
+    if (!id || !id.match(/^[0-9a-fA-F]{24}$/)) {
+      return res.status(400).json({ message: "Invalid caregiver id" });
+    }
+
+    const caregiver = await User.findOne({
+      _id: id,
+      agencyId: req.agencyId,
+      role: "caregiver",
+    }).lean();
+
+    if (!caregiver) {
+      return res.status(404).json({ message: "Caregiver not found" });
+    }
+
+    res.json(caregiver);
+  } catch (err) {
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
 // POST /api/agency/caregivers
 router.post("/register", auth, agencyScope, async (req, res) => {
   const { email, firstName, lastName, phone } = req.body;
@@ -79,7 +102,6 @@ router.post("/login", async (req, res) => {
       },
     });
   } catch (err) {
-    console.error("Admin login error:", err);
     res.status(500).json({ message: "Server error" });
   }
 });
