@@ -43,6 +43,8 @@ const UserSchema = new mongoose.Schema(
       type: String,
       trim: true,
     },
+    // Caregiver-specific fields moved to CaregiverProfile model.
+    // (legacy data will remain in existing documents but new writes should use CaregiverProfile.)
     status: {
       type: String,
       enum: ["active", "inactive", "invited", "suspended"],

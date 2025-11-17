@@ -37,6 +37,7 @@ router.get(
       caregiverId: a.caregiverId._id,
       caregiver: a.caregiverId,
       isPrimary: a.isPrimary,
+      isSecondary: a.isSecondary,
     }));
 
     res.json(result);
@@ -50,7 +51,7 @@ router.post(
   agencyScope,
   async (req, res) => {
     const { patientId } = req.params;
-    const { caregiverId, isPrimary } = req.body;
+    const { caregiverId, isPrimary, isSecondary } = req.body;
 
     // 1) check patient
     const patient = await Patient.findOne({
@@ -92,6 +93,7 @@ router.post(
       patientId,
       caregiverId,
       isPrimary: !!isPrimary,
+      isSecondary: !!isSecondary,
       createdBy: req.user.id,
     });
 

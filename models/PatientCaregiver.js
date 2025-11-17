@@ -25,6 +25,10 @@ const PatientCaregiverSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    isSecondary: {
+      type: Boolean,
+      default: false,
+    },
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
@@ -39,6 +43,12 @@ PatientCaregiverSchema.index({ agencyId: 1, caregiverId: 1 });
 PatientCaregiverSchema.index(
   { patientId: 1, isPrimary: 1 },
   { partialFilterExpression: { isPrimary: true } }
+);
+
+// Optional index to speed up queries for secondary caregivers if needed
+PatientCaregiverSchema.index(
+  { patientId: 1, isSecondary: 1 },
+  { partialFilterExpression: { isSecondary: true } }
 );
 
 export default mongoose.model("PatientCaregiver", PatientCaregiverSchema);
