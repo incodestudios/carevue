@@ -6,6 +6,7 @@ import agencyAdminRouter from "./routes/agency.admin.js";
 import agencyCareGiverRouter from "./routes/agency.caregivers.js";
 import agencyPatientsRouter from "./routes/agency.patients.js";
 import agencyAssignmentsRouter from "./routes/agency.assignments.js";
+import agencyScheduleVisitsRouter from "./routes/agency.schedule.visits.js";
 import agencyStripeWebhook from "./routes/stripe.webhook.js";
 import superAdminRoutes from "./routes/super.admin.js";
 import mongoose from 'mongoose';
@@ -65,6 +66,7 @@ app.use("/api/agency/admin", agencyAdminRouter);
 app.use("/api/agency/caregivers", agencyCareGiverRouter);
 app.use("/api/agency/patients", agencyPatientsRouter);
 app.use("/api/agency", agencyAssignmentsRouter);
+app.use("/api/agency/schedule/visits", agencyScheduleVisitsRouter);
 app.use("/api/stripe", agencyStripeWebhook);
 //app.use("/api/users", require("./routes/userRoutes"))
 
