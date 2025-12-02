@@ -108,9 +108,21 @@ router.post("/", auth, agencyScope, async (req, res) => {
       return res.status(403).json({ message: "Not allowed" });
     }
 
-  const { patientId, caregiverId, startTime, endTime, title, location, serviceType, notes, status } = req.body || {};
-
-    console.log("StartTime:", startTime, "EndTime:", endTime);
+  const {
+      patientId,
+      caregiverId,
+      startTime,
+      endTime,
+      title,
+      location,
+      serviceType,
+      notes,
+      status,
+      clockInTime,
+      clockOutTime,
+      visitDate,
+      date,
+    } = req.body || {};
 
     if (!isValidObjectId(patientId) || !isValidObjectId(caregiverId)) {
       return res.status(400).json({ message: "Valid patientId and caregiverId are required" });
@@ -121,8 +133,9 @@ router.post("/", auth, agencyScope, async (req, res) => {
 
     // Accept either full ISO datetimes OR HH:mm with an accompanying date (visitDate/date)
     let start, end;
+    const dateStr = visitDate || date;
+
     if (isTimeOnly(startTime) || isTimeOnly(endTime)) {
-      const dateStr = req.body?.visitDate || req.body?.date;
       if (!dateStr) {
         return res.status(400).json({
           message:
@@ -138,6 +151,25 @@ router.post("/", auth, agencyScope, async (req, res) => {
 
     if (Number.isNaN(start?.getTime()) || Number.isNaN(end?.getTime()) || end <= start) {
       return res.status(400).json({ message: "Invalid time range" });
+    }
+
+    // Optional clock-in/out times (accepts full datetime or HH:mm with provided date)
+    const parseClockTime = (value) => {
+      if (!value) return undefined;
+      if (isTimeOnly(value)) {
+        if (!dateStr) return null;
+        return combineDateAndTime(dateStr, value);
+      }
+      return new Date(value);
+    };
+
+    const clockIn = parseClockTime(clockInTime);
+    const clockOut = parseClockTime(clockOutTime);
+    if (clockIn === null || clockOut === null || Number.isNaN(clockIn?.getTime()) || Number.isNaN(clockOut?.getTime())) {
+      return res.status(400).json({
+        message:
+          "Invalid clockInTime/clockOutTime. Provide full datetime or HH:mm with visitDate/date (YYYY-MM-DD).",
+      });
     }
 
     // Ensure patient and caregiver belong to agency
@@ -163,10 +195,12 @@ router.post("/", auth, agencyScope, async (req, res) => {
       serviceType,
       status: status || "scheduled",
       notes,
+      clockInTime: clockIn,
+      clockOutTime: clockOut,
       createdBy: req.user.id,
     });
 
-    res.status(201).json(visit);
+    res.status(201).json({visit, message: "Visit created successfully" });
   } catch (err) {
     console.error("Error creating visit:", err);
     res.status(500).json({ message: "Server error" });
@@ -184,17 +218,32 @@ router.patch("/:id", auth, agencyScope, async (req, res) => {
     if (!isValidObjectId(id)) return res.status(400).json({ message: "Invalid id" });
 
     const update = { ...req.body };
+    const dateStr = update.visitDate || update.date;
     // Protect immutable fields
     ["_id", "agencyId", "createdBy", "updatedBy"].forEach((k) => delete update[k]);
 
-    // Validate times and conflict if changing time/caregiver
-    let start, end, caregiverId;
-    if (update.startTime) start = new Date(update.startTime);
-    if (update.endTime) end = new Date(update.endTime);
+    // Parse times (supports HH:mm with visitDate/date)
+    const parseTimeValue = (value) => {
+      if (!value) return undefined;
+      if (isTimeOnly(value)) {
+        if (!dateStr) return null;
+        return combineDateAndTime(dateStr, value);
+      }
+      return new Date(value);
+    };
+
+    let start = parseTimeValue(update.startTime);
+    let end = parseTimeValue(update.endTime);
+    const clockIn = parseTimeValue(update.clockInTime);
+    const clockOut = parseTimeValue(update.clockOutTime);
+    let caregiverId;
     if (update.caregiverId) caregiverId = update.caregiverId;
 
-    if ((start && isNaN(start)) || (end && isNaN(end))) {
-      return res.status(400).json({ message: "Invalid time values" });
+    if ([start, end, clockIn, clockOut].some((t) => t === null || Number.isNaN(t?.getTime()))) {
+      return res.status(400).json({
+        message:
+          "Invalid time values. Provide full datetime or HH:mm with visitDate/date (YYYY-MM-DD).",
+      });
     }
     if (start && end && end <= start) {
       return res.status(400).json({ message: "Invalid time range" });
@@ -217,6 +266,11 @@ router.patch("/:id", auth, agencyScope, async (req, res) => {
     if (conflict) return res.status(409).json({ message: "Caregiver has overlapping visit" });
 
     update.updatedBy = req.user.id;
+    if (start) update.startTime = start;
+    if (end) update.endTime = end;
+    if (clockIn !== undefined) update.clockInTime = clockIn;
+    if (clockOut !== undefined) update.clockOutTime = clockOut;
+    ["visitDate", "date"].forEach((k) => delete update[k]);
     const updated = await Visit.findOneAndUpdate(
       { _id: id, agencyId: req.agencyId },
       { $set: update },
@@ -245,6 +299,84 @@ router.delete("/:id", auth, agencyScope, async (req, res) => {
     res.json({ success: true });
   } catch (err) {
     console.error("Error deleting visit:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// Caregiver clock-in/out route
+// POST /api/agency/schedule/visits/:id/clock
+router.post("/:id/clock", auth, agencyScope, async (req, res) => {
+  try {
+    // Only caregivers can use this route
+    if (req.user.role !== "caregiver" && req.user.role !== "agency_super_admin" && req.user.role !== "agency_admin") {
+      return res.status(403).json({ message: "Only caregivers can clock in/out" });
+    }
+    const { id } = req.params;
+    if (!isValidObjectId(id)) return res.status(400).json({ message: "Invalid visit id" });
+
+    const visit = await Visit.findOne({ _id: id, agencyId: req.agencyId, caregiverId: req.user.id });
+    if (!visit) return res.status(404).json({ message: "Visit not found or not assigned to you" });
+
+    const { clockInTime, clockOutTime, visitDate, date } = req.body || {};
+    const dateStr = visitDate || date;
+    const parseTimeValue = (value) => {
+      if (!value) return undefined;
+      if (typeof value === "string" && /^\d{1,2}:\d{2}$/.test(value)) {
+        if (!dateStr) return null;
+        return new Date(`${dateStr}T${value}`);
+      }
+      return new Date(value);
+    };
+    const clockIn = parseTimeValue(clockInTime);
+    const clockOut = parseTimeValue(clockOutTime);
+    if ([clockIn, clockOut].some((t) => t === null || Number.isNaN(t?.getTime()))) {
+      return res.status(400).json({ message: "Invalid clockInTime/clockOutTime. Provide full datetime or HH:mm with visitDate/date (YYYY-MM-DD)." });
+    }
+
+    // Only update provided fields
+    const update = {};
+    if (clockIn !== undefined) update.clockInTime = clockIn;
+    if (clockOut !== undefined) update.clockOutTime = clockOut;
+    update.updatedBy = req.user.id;
+
+    const updated = await Visit.findOneAndUpdate(
+      { _id: id, agencyId: req.agencyId, caregiverId: req.user.id },
+      { $set: update },
+      { new: true }
+    );
+    res.json({ message: "Clock-in/out updated", visit: updated });
+  } catch (err) {
+    console.error("Error clocking in/out:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// GET /api/agency/schedule/visits/caregivers/:caregiverId/patients
+// Returns patients that have visits with the given caregiver (scoped to agency)
+router.get("/caregivers/:caregiverId/patients", auth, agencyScope, async (req, res) => {
+  try {
+    const { caregiverId } = req.params;
+    if (!isValidObjectId(caregiverId)) return res.status(400).json({ message: "Invalid caregiver id" });
+
+    // Caregivers can only view their own assignments
+    if (req.user.role === "caregiver" && String(req.user.id) !== String(caregiverId)) {
+      return res.status(403).json({ message: "Access denied" });
+    }
+
+    // Ensure caregiver belongs to agency
+    const caregiver = await User.findOne({ _id: caregiverId, agencyId: req.agencyId, role: "caregiver" }).lean();
+    if (!caregiver) return res.status(404).json({ message: "Caregiver not found" });
+
+    const patientIds = await Visit.find({ agencyId: req.agencyId, caregiverId }).distinct("patientId");
+    if (!patientIds.length) return res.json([]);
+
+    const patients = await Patient.find({ _id: { $in: patientIds }, agencyId: req.agencyId })
+      .sort({ lastName: 1, firstName: 1 })
+      .lean();
+
+    res.json(patients);
+  } catch (err) {
+    console.error("Error fetching patients for caregiver:", err);
     res.status(500).json({ message: "Server error" });
   }
 });

@@ -1,7 +1,9 @@
+// GET /api/agency/patients/:patientId/caregivers
 import { Router } from "express";
 import auth from "../middlewares/auth.js";
 import agencyScope from "../middlewares/agencyScope.js";
 import Patient from "../models/Patient.js";
+import { geocodeAddress } from "../utils/geocodeAddress.js";
 import PatientCaregiver from "../models/PatientCaregiver.js";
 
 const router = Router();
@@ -232,10 +234,26 @@ router.post("/register", auth, agencyScope, async (req, res) => {
       healthConditionDetails,
       hasAllergies,
       allergyDetails,
+      // new fields
+      preferredCaregivers,
+      requiredSkills,
+      languages,
+      culture,
     } = req.body;
 
     if (!firstName || !lastName) {
       return res.status(400).json({ message: "firstName and lastName are required" });
+    }
+
+    // Geocode address for location
+    let location = undefined;
+    const addressParts = [addressLine1, city, state, zipCode].filter(Boolean).join(", ");
+    if (addressParts) {
+      try {
+        location = await geocodeAddress(addressParts);
+      } catch (geoErr) {
+        console.error("Geocoding failed:", geoErr);
+      }
     }
 
     const patient = await Patient.create({
@@ -299,6 +317,12 @@ router.post("/register", auth, agencyScope, async (req, res) => {
       healthConditionDetails,
       hasAllergies,
       allergyDetails,
+      // new fields
+      preferredCaregivers,
+      requiredSkills,
+      languages,
+      culture,
+      location,
     });
 
     return res.status(201).json(patient);
@@ -360,6 +384,40 @@ router.patch("/:id", auth, agencyScope, async (req, res) => {
     return res.json(updated);
   } catch (err) {
     return res.status(500).json({ message: "Server error" });
+  }
+});
+
+// api/agency/patients/:patientId/caregivers
+router.get("/:patientId/caregivers", auth, agencyScope, async (req, res) => {
+  try {
+    const { patientId } = req.params;
+    if (!patientId || !patientId.match(/^[0-9a-fA-F]{24}$/)) {
+      return res.status(400).json({ message: "Invalid patient id" });
+    }
+    // verify patient belongs to this agency
+    const patient = await Patient.findOne({ _id: patientId, agencyId: req.agencyId });
+    if (!patient) return res.status(404).json({ message: "Patient not found" });
+
+    const assignments = await PatientCaregiver.find({
+      agencyId: req.agencyId,
+      patientId,
+    })
+      .populate("caregiverId", "firstName lastName email")
+      .lean();
+
+    // normalize for frontend
+    const result = assignments.map((a) => ({
+      _id: a._id,
+      caregiverId: a.caregiverId._id,
+      caregiver: a.caregiverId,
+      isPrimary: a.isPrimary,
+      isSecondary: a.isSecondary,
+    }));
+
+    res.json(result);
+  } catch (err) {
+    console.error("Error fetching patient caregivers:", err);
+    res.status(500).json({ message: "Server error" });
   }
 });
 
