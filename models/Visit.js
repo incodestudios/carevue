@@ -25,6 +25,8 @@ const VisitSchema = new mongoose.Schema(
   serviceType: { type: String, trim: true, index: true },
     startTime: { type: Date, required: true, index: true },
     endTime: { type: Date, required: true, index: true },
+    clockInTime: { type: Date, index: true },
+    clockOutTime: { type: Date, index: true },
     status: {
       type: String,
       enum: ["scheduled", "in_progress", "completed", "canceled", "no_show"],

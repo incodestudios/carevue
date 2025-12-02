@@ -118,6 +118,40 @@ const PatientSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    // Patient login fields
+    email: {
+      type: String,
+      trim: true,
+      lowercase: true,
+      unique: true,
+      sparse: true,
+    },
+    passwordHash: {
+      type: String,
+      trim: true,
+    },
+    status: {
+      type: String,
+      enum: ["active", "inactive", "invited", "suspended"],
+      default: "active",
+    },
+    role: {
+      type: String,
+      enum: ["patient"],
+      default: "patient",
+      index: true,
+    },
+    // New fields from sample data
+    preferredCaregivers: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
+    requiredSkills: [{ type: String, trim: true }],
+    languages: [{ type: String, trim: true }],
+    culture: { type: String, trim: true },
+    location: {
+      lat: { type: Number },
+      lng: { type: Number },
+      // Note: Should be auto-filled from address via geocoding in route/controller
+    },
+    services: [{ type: String, trim: true }],
   },
   { timestamps: true }
 );

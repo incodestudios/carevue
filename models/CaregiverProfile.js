@@ -30,6 +30,26 @@ const CaregiverProfileSchema = new mongoose.Schema(
     // Professional info
     qualification: { type: String, trim: true },
     additionalQualifications: [{ type: String, trim: true }],
+    skills: [{ type: String, trim: true }],
+    maxHours: { type: Number },
+    location: {
+      lat: { type: Number },
+      lng: { type: Number },
+      // Note: Should be auto-filled from address via geocoding in route/controller
+    },
+    status: { type: String, trim: true },
+    availability: {
+      daysOfWeek: [{ type: Number }],
+      timeWindows: [{ start: String, end: String }],
+    },
+    preferredShift: [{ type: String, trim: true }],
+    travelRadiusMi: { type: Number },
+    languages: [{ type: String, trim: true }],
+    weeklyHours: { type: Number },
+    familiarity: {
+      type: Map,
+      of: Number, // patientId: familiarity score
+    },
 
     // Insurance / licensing
     hasAutoInsurance: { type: Boolean, default: false },

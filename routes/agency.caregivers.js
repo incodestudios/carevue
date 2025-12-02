@@ -3,6 +3,7 @@ import auth from "../middlewares/auth.js";
 import agencyScope from "../middlewares/agencyScope.js";
 import User from "../models/User.js";
 import CaregiverProfile from "../models/CaregiverProfile.js";
+import { geocodeAddress } from "../utils/geocodeAddress.js";
 import bcrypt from "bcrypt";
 import generateToken from "../utils/generateToken.js";
 
@@ -88,6 +89,7 @@ router.post("/register", auth, agencyScope, async (req, res) => {
       services,
       emergencyContactName,
       emergencyContactPhone,
+      languages,
       emergencyContactEmail,
       preferredDays,
       preferredStartTime,
@@ -123,6 +125,17 @@ router.post("/register", auth, agencyScope, async (req, res) => {
     const preferredDaysArr = Array.isArray(preferredDays) ? preferredDays : preferredDays ? [preferredDays] : [];
     const additionalQualificationsArr = Array.isArray(additionalQualifications) ? additionalQualifications : additionalQualifications ? [additionalQualifications] : [];
 
+    // Geocode address for location
+    let location = undefined;
+    const addressParts = [addressLine1, city, state, zipCode].filter(Boolean).join(", ");
+    if (addressParts) {
+      try {
+        location = await geocodeAddress(addressParts);
+      } catch (geoErr) {
+        console.error("Geocoding failed:", geoErr);
+      }
+    }
+
     const profile = await CaregiverProfile.create({
       userId: user._id,
       agencyId: req.agencyId,
@@ -143,11 +156,13 @@ router.post("/register", auth, agencyScope, async (req, res) => {
       insuranceProvider,
       services: servicesArr,
       emergencyContactName,
+      languages: Array.isArray(languages) ? languages : languages ? [languages] : [],
       emergencyContactPhone,
       emergencyContactEmail,
       preferredDays: preferredDaysArr,
       preferredStartTime,
       preferredEndTime,
+      location,
     });
 
     return res.status(201).json({
