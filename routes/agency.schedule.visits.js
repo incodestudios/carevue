@@ -1,3 +1,4 @@
+import sendCaregiverScheduleEmail from "../utils/sendCaregiverScheduleEmail.js";
 import { Router } from "express";
 import mongoose from "mongoose";
 import auth from "../middlewares/auth.js";
@@ -40,7 +41,14 @@ async function hasConflict({ agencyId, caregiverId, startTime, endTime, excludeI
 // Optional filters: patientId, caregiverId, status, from, to, page, limit
 router.get("/", auth, agencyScope, async (req, res) => {
   try {
-    const { patientId, caregiverId, status, from, to, serviceType, page = 1, limit = 50 } = req.query;
+    let { patientId, caregiverId, status, from, to, serviceType, page = 1, limit = 10 } = req.query;
+
+    // Set different limits based on role
+    if (req.user.role === "caregiver") {
+      limit = 50;
+    } else {
+      limit = 100;
+    }
 
     const q = { agencyId: req.agencyId };
 
@@ -52,8 +60,8 @@ router.get("/", auth, agencyScope, async (req, res) => {
     }
 
     if (patientId && isValidObjectId(patientId)) q.patientId = patientId;
-  if (status) q.status = status;
-  if (serviceType) q.serviceType = serviceType;
+    if (status) q.status = status;
+    if (serviceType) q.serviceType = serviceType;
 
     if (from || to) {
       q.startTime = {};
@@ -70,10 +78,10 @@ router.get("/", auth, agencyScope, async (req, res) => {
       .lean();
 
     res.json(items);
-  } catch (err) {
-    console.error("Error listing visits:", err);
-    res.status(500).json({ message: "Server error" });
-  }
+    } catch (err) {
+      console.error("Error listing visits:", err);
+      res.status(500).json({ message: "Server error" });
+    }
 });
 
 // GET /api/agency/schedule/visits/:id
@@ -200,6 +208,19 @@ router.post("/", auth, agencyScope, async (req, res) => {
       createdBy: req.user.id,
     });
 
+    // Notify caregiver if requested and visit is in the future
+    if (req.body.notifyCaregiver && start > new Date()) {
+      try {
+        await sendCaregiverScheduleEmail({
+          caregiver,
+          visit,
+          agency: req.agencyId,
+        });
+      } catch (e) {
+        console.error("Failed to send caregiver schedule email:", e);
+      }
+    }
+
     res.status(201).json({visit, message: "Visit created successfully" });
   } catch (err) {
     console.error("Error creating visit:", err);
@@ -277,6 +298,19 @@ router.patch("/:id", auth, agencyScope, async (req, res) => {
       { new: true }
     );
 
+    // Notify caregiver if requested and visit is in the future
+    if (req.body.notifyCaregiver && newStart > new Date()) {
+      try {
+        const caregiver = await User.findOne({ _id: newCaregiver, agencyId: req.agencyId, role: "caregiver" }).lean();
+        await sendCaregiverScheduleEmail({
+          caregiver,
+          visit: updated,
+          agency: req.agencyId,
+        });
+      } catch (e) {
+        console.error("Failed to send caregiver schedule email:", e);
+      }
+    }
     res.json(updated);
   } catch (err) {
     console.error("Error updating visit:", err);
@@ -295,6 +329,22 @@ router.delete("/:id", auth, agencyScope, async (req, res) => {
 
     const deleted = await Visit.findOneAndDelete({ _id: id, agencyId: req.agencyId });
     if (!deleted) return res.status(404).json({ message: "Visit not found" });
+
+    // Notify caregiver if visit was in the future
+    if (deleted.caregiverId && deleted.startTime > new Date()) {
+      try {
+        const caregiver = await User.findOne({ _id: deleted.caregiverId, agencyId: req.agencyId, role: "caregiver" }).lean();
+        if (caregiver) {
+          await sendCaregiverScheduleEmail({
+            caregiver,
+            visit: deleted,
+            agency: req.agencyId,
+          });
+        }
+      } catch (e) {
+        console.error("Failed to send caregiver schedule email on delete:", e);
+      }
+    }
 
     res.json({ success: true });
   } catch (err) {
