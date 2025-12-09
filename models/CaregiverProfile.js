@@ -31,7 +31,7 @@ const CaregiverProfileSchema = new mongoose.Schema(
     qualification: { type: String, trim: true },
     additionalQualifications: [{ type: String, trim: true }],
     skills: [{ type: String, trim: true }],
-    maxHours: { type: Number },
+    maxHours: { type: Number, default: 40 },
     location: {
       lat: { type: Number },
       lng: { type: Number },
@@ -43,7 +43,7 @@ const CaregiverProfileSchema = new mongoose.Schema(
       timeWindows: [{ start: String, end: String }],
     },
     preferredShift: [{ type: String, trim: true }],
-    travelRadiusMi: { type: Number },
+    travelRadiusMi: { type: Number, default: 30 },
     languages: [{ type: String, trim: true }],
     weeklyHours: { type: Number },
     familiarity: {

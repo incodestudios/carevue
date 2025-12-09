@@ -1,4 +1,3 @@
-import sendCaregiverScheduleEmail from "../utils/sendCaregiverScheduleEmail.js";
 import { Router } from "express";
 import mongoose from "mongoose";
 import auth from "../middlewares/auth.js";
@@ -6,6 +5,7 @@ import agencyScope from "../middlewares/agencyScope.js";
 import Visit from "../models/Visit.js";
 import Patient from "../models/Patient.js";
 import User from "../models/User.js";
+import sendCaregiverScheduleEmail from "../utils/sendCaregiverScheduleEmail.js";
 
 const router = Router();
 
@@ -47,7 +47,7 @@ router.get("/", auth, agencyScope, async (req, res) => {
     if (req.user.role === "caregiver") {
       limit = 50;
     } else {
-      limit = 100;
+      limit = 200;
     }
 
     const q = { agencyId: req.agencyId };
@@ -112,11 +112,12 @@ router.get("/:id", auth, agencyScope, async (req, res) => {
 // POST /api/agency/schedule/visits
 router.post("/", auth, agencyScope, async (req, res) => {
   try {
+    
     if (!ADMIN_ROLES.includes(req.user.role)) {
       return res.status(403).json({ message: "Not allowed" });
     }
 
-  const {
+    const {
       patientId,
       caregiverId,
       startTime,
@@ -130,6 +131,7 @@ router.post("/", auth, agencyScope, async (req, res) => {
       clockOutTime,
       visitDate,
       date,
+      notifyCaregiver,
     } = req.body || {};
 
     if (!isValidObjectId(patientId) || !isValidObjectId(caregiverId)) {
@@ -159,6 +161,13 @@ router.post("/", auth, agencyScope, async (req, res) => {
 
     if (Number.isNaN(start?.getTime()) || Number.isNaN(end?.getTime()) || end <= start) {
       return res.status(400).json({ message: "Invalid time range" });
+    }
+
+    const tenMinutesFromNow = new Date(Date.now() + 10 * 60 * 1000);
+    if (start < tenMinutesFromNow) {
+      return res.status(400).json({
+        message: "Cannot schedule a visit in the past. Start time must be at least 10 minutes from now.",
+      });
     }
 
     // Optional clock-in/out times (accepts full datetime or HH:mm with provided date)
@@ -209,10 +218,11 @@ router.post("/", auth, agencyScope, async (req, res) => {
     });
 
     // Notify caregiver if requested and visit is in the future
-    if (req.body.notifyCaregiver && start > new Date()) {
+    if (notifyCaregiver && start > new Date()) {
       try {
         await sendCaregiverScheduleEmail({
           caregiver,
+          patient,
           visit,
           agency: req.agencyId,
         });
@@ -308,7 +318,7 @@ router.patch("/:id", auth, agencyScope, async (req, res) => {
           agency: req.agencyId,
         });
       } catch (e) {
-        console.error("Failed to send caregiver schedule email:", e);
+        console.error("Failed to send caregiver schedule email here as expected:", e);
       }
     }
     res.json(updated);
@@ -367,7 +377,11 @@ router.post("/:id/clock", auth, agencyScope, async (req, res) => {
     const visit = await Visit.findOne({ _id: id, agencyId: req.agencyId, caregiverId: req.user.id });
     if (!visit) return res.status(404).json({ message: "Visit not found or not assigned to you" });
 
-    const { clockInTime, clockOutTime, visitDate, date } = req.body || {};
+    const { clockInTime, clockOutTime, note, visitDate, date } = req.body || {};
+
+    console.log("clockInTime ", clockInTime, "clockOutTime ", clockOutTime, "visitDate ", visitDate, "date ", date);
+    console.log("Note ", note);
+
     const dateStr = visitDate || date;
     const parseTimeValue = (value) => {
       if (!value) return undefined;
@@ -387,6 +401,8 @@ router.post("/:id/clock", auth, agencyScope, async (req, res) => {
     const update = {};
     if (clockIn !== undefined) update.clockInTime = clockIn;
     if (clockOut !== undefined) update.clockOutTime = clockOut;
+    if (note && note.length) update.notes = note;
+
     update.updatedBy = req.user.id;
 
     const updated = await Visit.findOneAndUpdate(
@@ -397,6 +413,109 @@ router.post("/:id/clock", auth, agencyScope, async (req, res) => {
     res.json({ message: "Clock-in/out updated", visit: updated });
   } catch (err) {
     console.error("Error clocking in/out:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// GET /api/agency/schedule/visits/caregivers/:caregiverId/clocked-in
+// Returns { clockedIn: true/false, visit } for the caregiver
+router.get("/caregivers/:caregiverId/clocked-in", auth, agencyScope, async (req, res) => {
+  try {
+    const { caregiverId } = req.params;
+    if (!isValidObjectId(caregiverId)) return res.status(400).json({ message: "Invalid caregiver id" });
+
+    // Only allow self or admin roles
+    if (
+      req.user.role === "caregiver" && String(req.user.id) !== String(caregiverId)
+    ) {
+      return res.status(403).json({ message: "Access denied" });
+    }
+
+    const now = new Date();
+    const visit = await Visit.findOne({
+      caregiverId,
+      agencyId: req.agencyId,
+      clockInTime: { $ne: null },
+      clockOutTime: null,
+      startTime: { $lte: now },
+      endTime: { $gte: now },
+    })
+      .populate("patientId", "firstName lastName")
+      .lean();
+
+    res.json({ clockedIn: !!visit, visit });
+  } catch (err) {
+    console.error("Error checking caregiver clock-in status:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// GET /api/agency/schedule/visits/caregivers/:caregiverId/clocked-out
+// Returns { clockedOut: true/false, activeVisit } for the caregiver
+router.get("/caregivers/:caregiverId/clocked-out", auth, agencyScope, async (req, res) => {
+  try {
+    const { caregiverId } = req.params;
+    if (!isValidObjectId(caregiverId)) return res.status(400).json({ message: "Invalid caregiver id" });
+
+    // Only allow self or admin roles
+    if (
+      req.user.role === "caregiver" && String(req.user.id) !== String(caregiverId)
+    ) {
+      return res.status(403).json({ message: "Access denied" });
+    }
+
+    const now = new Date();
+    // Find any active visit (clocked in, not clocked out, and now within visit window)
+    const activeVisit = await Visit.findOne({
+      caregiverId,
+      agencyId: req.agencyId,
+      clockInTime: { $ne: null },
+      clockOutTime: null,
+      startTime: { $lte: now },
+      endTime: { $gte: now },
+    })
+      .populate("patientId", "firstName lastName")
+      .lean();
+
+    // If no active visit, user is clocked out
+    res.json({ clockedOut: !activeVisit, activeVisit });
+  } catch (err) {
+    console.error("Error checking caregiver clock-out status:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// GET /api/agency/schedule/visits/caregivers/:caregiverId/visit/:visitId/note
+// Returns the note for a caregiver and visit on a specific date
+router.get("/caregivers/:caregiverId/visit/:visitId/note", auth, agencyScope, async (req, res) => {
+  try {
+  const { caregiverId, visitId } = req.params;
+    if (!isValidObjectId(caregiverId) || !isValidObjectId(visitId)) {
+      return res.status(400).json({ message: "Invalid caregiver or visit id" });
+    }
+    // Only allow self or admin roles
+    if (
+      req.user.role === "caregiver" && String(req.user.id) !== String(caregiverId)
+    ) {
+      return res.status(403).json({ message: "Access denied" });
+    }
+    // Find the visit for this caregiver, visitId, and agency
+    const visit = await Visit.findOne({
+      _id: visitId,
+      caregiverId,
+      agencyId: req.agencyId,
+    }).lean();
+    if (!visit) return res.status(404).json({ message: "Visit not found" });
+
+    // Require clock-in and clock-out before returning note
+    if (!visit.clockInTime || !visit.clockOutTime) {
+      return res.status(403).json({ message: "Caregiver must be clocked in and clocked out for this visit before viewing the note." });
+    }
+
+    // Return note (not notes)
+    res.json({ note: visit.notes || "" });
+  } catch (err) {
+    console.error("Error fetching visit note:", err);
     res.status(500).json({ message: "Server error" });
   }
 });
