@@ -159,6 +159,7 @@ router.post("/register", auth, agencyScope, async (req, res) => {
       languages: Array.isArray(languages) ? languages : languages ? [languages] : [],
       emergencyContactPhone,
       emergencyContactEmail,
+      travelRadiusMi: 30,
       preferredDays: preferredDaysArr,
       preferredStartTime,
       preferredEndTime,
