@@ -5,7 +5,7 @@ import agencyScope from "../middlewares/agencyScope.js";
 import Visit from "../models/Visit.js";
 import Patient from "../models/Patient.js";
 import User from "../models/User.js";
-import sendCaregiverScheduleEmail from "../utils/sendCaregiverScheduleEmail.js";
+import { sendCaregiverScheduleEmail, sendCaregiverNotificationEmail } from "../utils/sendCaregiverScheduleEmail.js";
 
 const router = Router();
 
@@ -45,9 +45,9 @@ router.get("/", auth, agencyScope, async (req, res) => {
 
     // Set different limits based on role
     if (req.user.role === "caregiver") {
-      limit = 50;
+      limit = 100;
     } else {
-      limit = 200;
+      limit = 300;
     }
 
     const q = { agencyId: req.agencyId };
@@ -379,9 +379,6 @@ router.post("/:id/clock", auth, agencyScope, async (req, res) => {
 
     const { clockInTime, clockOutTime, note, visitDate, date } = req.body || {};
 
-    console.log("clockInTime ", clockInTime, "clockOutTime ", clockOutTime, "visitDate ", visitDate, "date ", date);
-    console.log("Note ", note);
-
     const dateStr = visitDate || date;
     const parseTimeValue = (value) => {
       if (!value) return undefined;
@@ -413,6 +410,53 @@ router.post("/:id/clock", auth, agencyScope, async (req, res) => {
     res.json({ message: "Clock-in/out updated", visit: updated });
   } catch (err) {
     console.error("Error clocking in/out:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// POST /api/agency/schedule/visits/:id/notify-clock-in
+// Sends a reminder email to the assigned caregiver to clock in
+router.post("/:id/notify-clock-in", auth, agencyScope, async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!isValidObjectId(id)) return res.status(400).json({ message: "Invalid visit id" });
+
+    const visit = await Visit.findOne({ _id: id, agencyId: req.agencyId })
+      .populate("caregiverId", "firstName lastName email")
+      .populate("patientId", "firstName lastName addressLine1 addressLine2 city state zipCode")
+      .lean();
+    if (!visit) return res.status(404).json({ message: "Visit not found" });
+
+    const caregiver = visit.caregiverId;
+    const patient = visit.patientId;
+    const isOwnVisit = String(caregiver?._id || caregiver) === String(req.user.id);
+    const isAdmin = ADMIN_ROLES.includes(req.user.role);
+    if (!isAdmin && !(req.user.role === "caregiver" && isOwnVisit)) {
+      return res.status(403).json({ message: "Not allowed" });
+    }
+
+    const startTime = new Date(visit.startTime);
+    const startLabel = Number.isNaN(startTime.getTime()) ? "your upcoming visit" : startTime.toLocaleString();
+    const patientName =
+      patient && (patient.firstName || patient.lastName)
+        ? `${patient.firstName || ""} ${patient.lastName || ""}`.trim()
+        : "your patient";
+
+    const message =
+      `Hi ${caregiver.firstName},\n\n` +
+      `It's time to clock in for your visit with ${patientName} scheduled for ${startLabel}.\n` +
+      `Please log into CareVue to complete your clock-in.\n\n` +
+      `Thank you,\nCareVue Team`;
+
+    await sendCaregiverNotificationEmail({
+      caregiver,
+      subject: "Time to clock in",
+      text: message,
+    });
+
+    res.json({ message: "Clock-in notification sent" });
+  } catch (err) {
+    console.error("Error sending clock-in email:", err);
     res.status(500).json({ message: "Server error" });
   }
 });

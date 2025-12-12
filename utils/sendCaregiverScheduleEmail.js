@@ -68,7 +68,14 @@ function generateSchedulePDFTable(visit, patient, caregiver) {
 }
 
 // Sends email with PDF attachment
-export default async function sendCaregiverScheduleEmail({ caregiver, patient, visit, agency }) {
+export async function sendCaregiverScheduleEmail({
+  caregiver,
+  patient,
+  visit,
+  agency,
+  subject,
+  text,
+}) {
   if (!caregiver?.email) throw new Error("Caregiver email missing");
   const pdfBuffer = await generateSchedulePDF(visit, patient, caregiver);
   //const pdfBuffer = await generateSchedulePDFTable(visit, patient, caregiver);
@@ -97,8 +104,10 @@ export default async function sendCaregiverScheduleEmail({ caregiver, patient, v
   const mailOptions = {
     from: fromAddress,
     to: caregiver.email,
-    subject: "Your Updated Schedule",
-    text: `Dear ${caregiver.firstName},\n\nYour schedule has been updated. Please see the attached PDF for details.\n\nThank you,\nCareVue Team`,
+    subject: subject || "Your Updated Schedule",
+    text:
+      text ||
+      `Dear ${caregiver.firstName},\n\nYour schedule has been updated. Please see the attached PDF for details.\n\nThank you,\nCareVue Team`,
     attachments: [
       {
         filename: "schedule.pdf",
@@ -109,10 +118,53 @@ export default async function sendCaregiverScheduleEmail({ caregiver, patient, v
  // Send the email
   try {
     const info = await transporter.sendMail(mailOptions);
-    console.log('Message sent: %s', info.messageId);
     return info;
   } catch (error) {
-    console.error('Error sending email:', error);
+    throw error;
+  }
+}
+
+// Sends email Notification to Caregiver
+export async function sendCaregiverNotificationEmail({
+  caregiver,
+  subject,
+  text,
+}) {
+  if (!caregiver?.email) throw new Error("Caregiver email missing");
+  // const pdfBuffer = await generateSchedulePDF(visit, patient, caregiver);
+  //const pdfBuffer = await generateSchedulePDFTable(visit, patient, caregiver);
+
+  // Configure mail transport (use env with sensible defaults)
+  const transporter = nodemailer.createTransport({
+    host: process.env.SMTP_HOST || "smtp.example.com",
+    port: process.env.SMTP_PORT ? Number(process.env.SMTP_PORT) : 587,
+    secure: String(process.env.SMTP_SECURE).toLowerCase() === "true",
+    auth: {
+      user: process.env.SMTP_USER || "user@example.com",
+      pass: process.env.SMTP_PASS || process.env.SMTP_PASSWORD || "password",
+    },
+  });
+
+  // Build "from" so it uses a valid address; allow name if provided without '@'
+  const envFrom = process.env.SMTP_FROM;
+  const authUser = process.env.SMTP_USER;
+  const fromAddress =
+    envFrom && envFrom.includes("@")
+      ? envFrom
+      : envFrom && authUser
+        ? `${envFrom} <${authUser}>`
+        : authUser || "no-reply@carevue.com";
+
+  const mailOptions = {
+    from: fromAddress,
+    to: caregiver.email,
+    subject: subject || "Your Updated Schedule",
+    text: text  };
+ // Send the email
+  try {
+    const info = await transporter.sendMail(mailOptions);
+    return info;
+  } catch (error) {
     throw error;
   }
 }
