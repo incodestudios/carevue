@@ -45,9 +45,9 @@ router.get("/", auth, agencyScope, async (req, res) => {
 
     // Set different limits based on role
     if (req.user.role === "caregiver") {
-      limit = 100;
+      limit = 500;
     } else {
-      limit = 300;
+      limit = 500;
     }
 
     const q = { agencyId: req.agencyId };
@@ -79,7 +79,7 @@ router.get("/", auth, agencyScope, async (req, res) => {
 
     res.json(items);
     } catch (err) {
-      console.error("Error listing visits:", err);
+      //console.error("Error listing visits:", err);
       res.status(500).json({ message: "Server error" });
     }
 });
@@ -104,7 +104,7 @@ router.get("/:id", auth, agencyScope, async (req, res) => {
 
     res.json(visit);
   } catch (err) {
-    console.error("Error fetching visit:", err);
+    //console.error("Error fetching visit:", err);
     res.status(500).json({ message: "Server error" });
   }
 });
@@ -227,13 +227,13 @@ router.post("/", auth, agencyScope, async (req, res) => {
           agency: req.agencyId,
         });
       } catch (e) {
-        console.error("Failed to send caregiver schedule email:", e);
+       // console.error("Failed to send caregiver schedule email:", e);
       }
     }
 
     res.status(201).json({visit, message: "Visit created successfully" });
   } catch (err) {
-    console.error("Error creating visit:", err);
+    //console.error("Error creating visit:", err);
     res.status(500).json({ message: "Server error" });
   }
 });
@@ -263,6 +263,9 @@ router.patch("/:id", auth, agencyScope, async (req, res) => {
       return new Date(value);
     };
 
+    const isDataUrl = (value) =>
+      typeof value === "string" && value.startsWith("data:image/") && value.length <= 5 * 1024 * 1024; // cap ~5MB string
+
     let start = parseTimeValue(update.startTime);
     let end = parseTimeValue(update.endTime);
     const clockIn = parseTimeValue(update.clockInTime);
@@ -278,6 +281,14 @@ router.patch("/:id", auth, agencyScope, async (req, res) => {
     }
     if (start && end && end <= start) {
       return res.status(400).json({ message: "Invalid time range" });
+    }
+    if (update.signatureDataUrl !== undefined) {
+      if (clockOut === undefined) {
+        return res.status(400).json({ message: "signatureDataUrl can only be sent with clockOutTime." });
+      }
+      if (!isDataUrl(update.signatureDataUrl)) {
+        return res.status(400).json({ message: "Invalid signatureDataUrl (must be data:image/* and <= 5MB)." });
+      }
     }
 
     const existing = await Visit.findOne({ _id: id, agencyId: req.agencyId });
@@ -318,12 +329,12 @@ router.patch("/:id", auth, agencyScope, async (req, res) => {
           agency: req.agencyId,
         });
       } catch (e) {
-        console.error("Failed to send caregiver schedule email here as expected:", e);
+       // console.error("Failed to send caregiver schedule email here as expected:", e);
       }
     }
     res.json(updated);
   } catch (err) {
-    console.error("Error updating visit:", err);
+    //console.error("Error updating visit:", err);
     res.status(500).json({ message: "Server error" });
   }
 });
@@ -352,13 +363,13 @@ router.delete("/:id", auth, agencyScope, async (req, res) => {
           });
         }
       } catch (e) {
-        console.error("Failed to send caregiver schedule email on delete:", e);
+       // console.error("Failed to send caregiver schedule email on delete:", e);
       }
     }
 
     res.json({ success: true });
   } catch (err) {
-    console.error("Error deleting visit:", err);
+    // console.error("Error deleting visit:", err);
     res.status(500).json({ message: "Server error" });
   }
 });
@@ -377,7 +388,17 @@ router.post("/:id/clock", auth, agencyScope, async (req, res) => {
     const visit = await Visit.findOne({ _id: id, agencyId: req.agencyId, caregiverId: req.user.id });
     if (!visit) return res.status(404).json({ message: "Visit not found or not assigned to you" });
 
-    const { clockInTime, clockOutTime, note, visitDate, date } = req.body || {};
+    const {
+      clockInTime,
+      clockOutTime,
+      note,
+      geofenceNotes,
+      visitDate,
+      date,
+      clockInLocation,
+      clockOutLocation,
+      signatureDataUrl,
+    } = req.body || {};
 
     const dateStr = visitDate || date;
     const parseTimeValue = (value) => {
@@ -394,11 +415,72 @@ router.post("/:id/clock", auth, agencyScope, async (req, res) => {
       return res.status(400).json({ message: "Invalid clockInTime/clockOutTime. Provide full datetime or HH:mm with visitDate/date (YYYY-MM-DD)." });
     }
 
+    const isSafeText = (value) => typeof value === "string" && !/[<>$]/.test(value);
+    const isDataUrl = (value) =>
+      typeof value === "string" && value.startsWith("data:image/") && value.length <= 5 * 1024 * 1024; // cap ~5MB string
+    const normalizeLocation = (value) => {
+      if (value === undefined) return undefined;
+      if (value === null) return null;
+      //const trimmed = value.trim();
+      return value;
+    };
+
     // Only update provided fields
     const update = {};
     if (clockIn !== undefined) update.clockInTime = clockIn;
     if (clockOut !== undefined) update.clockOutTime = clockOut;
-    if (note && note.length) update.notes = note;
+    if (note && note.length) { 
+       if(!isSafeText(note)) {
+         return res.status(400).json({ message: "Invalid note content." });
+       }
+       update.notes = note.replace(/['";\\]/g, "\\$&");
+      }
+
+    if (clockIn !== undefined) {
+      if (geofenceNotes && geofenceNotes.length) {
+        if (!isSafeText(geofenceNotes)) {
+          return res.status(400).json({ message: "Invalid geofenceNotes content." });
+        }
+        update.geofenceNotes = geofenceNotes.replace(/['";\\]/g, "\\$&");
+        update.geofenceNotesClockIn = geofenceNotes;
+      }
+    }
+    if (clockOut !== undefined) {
+      
+      if (geofenceNotes && geofenceNotes.length) {
+        if (!isSafeText(geofenceNotes)) {
+          return res.status(400).json({ message: "Invalid geofenceNotes content." });
+        }
+        update.geofenceNotes = geofenceNotes.replace(/['";\\]/g, "\\$&");
+        update.geofenceNotesClockOut = geofenceNotes;
+      }
+    }
+
+    const normalizedClockInLocation = normalizeLocation(clockInLocation);
+    if (normalizedClockInLocation === null) {
+      return res.status(400).json({ message: "Invalid clockInLocation content (must be a string up to 500 chars)." });
+    }
+    if (normalizedClockInLocation !== undefined) {
+      update.clockInLocation = normalizedClockInLocation;
+    }
+
+    const normalizedClockOutLocation = normalizeLocation(clockOutLocation);
+    if (normalizedClockOutLocation === null) {
+      return res.status(400).json({ message: "Invalid clockOutLocation content (must be a string up to 500 chars)." });
+    }
+    if (normalizedClockOutLocation !== undefined) {
+      update.clockOutLocation = normalizedClockOutLocation;
+    }
+
+    if (signatureDataUrl !== undefined) {
+      if (clockOut === undefined) {
+        return res.status(400).json({ message: "signatureDataUrl can only be sent with clockOutTime." });
+      }
+      if (!isDataUrl(signatureDataUrl)) {
+        return res.status(400).json({ message: "Invalid signatureDataUrl (must be data:image/* and <= 5MB)." });
+      }
+      update.signatureDataUrl = signatureDataUrl;
+    }
 
     update.updatedBy = req.user.id;
 
@@ -409,7 +491,7 @@ router.post("/:id/clock", auth, agencyScope, async (req, res) => {
     );
     res.json({ message: "Clock-in/out updated", visit: updated });
   } catch (err) {
-    console.error("Error clocking in/out:", err);
+    // console.error("Error clocking in/out:", err);
     res.status(500).json({ message: "Server error" });
   }
 });
@@ -456,7 +538,7 @@ router.post("/:id/notify-clock-in", auth, agencyScope, async (req, res) => {
 
     res.json({ message: "Clock-in notification sent" });
   } catch (err) {
-    console.error("Error sending clock-in email:", err);
+    // console.error("Error sending clock-in email:", err);
     res.status(500).json({ message: "Server error" });
   }
 });
@@ -489,7 +571,7 @@ router.get("/caregivers/:caregiverId/clocked-in", auth, agencyScope, async (req,
 
     res.json({ clockedIn: !!visit, visit });
   } catch (err) {
-    console.error("Error checking caregiver clock-in status:", err);
+    // console.error("Error checking caregiver clock-in status:", err);
     res.status(500).json({ message: "Server error" });
   }
 });
@@ -524,7 +606,7 @@ router.get("/caregivers/:caregiverId/clocked-out", auth, agencyScope, async (req
     // If no active visit, user is clocked out
     res.json({ clockedOut: !activeVisit, activeVisit });
   } catch (err) {
-    console.error("Error checking caregiver clock-out status:", err);
+    // console.error("Error checking caregiver clock-out status:", err);
     res.status(500).json({ message: "Server error" });
   }
 });
@@ -559,7 +641,7 @@ router.get("/caregivers/:caregiverId/visit/:visitId/note", auth, agencyScope, as
     // Return note (not notes)
     res.json({ note: visit.notes || "" });
   } catch (err) {
-    console.error("Error fetching visit note:", err);
+    // console.error("Error fetching visit note:", err);
     res.status(500).json({ message: "Server error" });
   }
 });
@@ -589,7 +671,7 @@ router.get("/caregivers/:caregiverId/patients", auth, agencyScope, async (req, r
 
     res.json(patients);
   } catch (err) {
-    console.error("Error fetching patients for caregiver:", err);
+    // console.error("Error fetching patients for caregiver:", err);
     res.status(500).json({ message: "Server error" });
   }
 });
