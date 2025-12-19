@@ -25,8 +25,11 @@ const VisitSchema = new mongoose.Schema(
   serviceType: { type: String, trim: true, index: true },
   startTime: { type: Date, required: true, index: true },
   endTime: { type: Date, required: true, index: true },
-  clockInTime: { type: Date, index: true },
-  clockOutTime: { type: Date, index: true },
+  clockInTime: { type: Date, index: true, default: null },
+  clockOutTime: { type: Date, index: true, default: null },
+  clockInLocation: { type: String, trim: true, default: null },
+  clockOutLocation: { type: String, trim: true, default: null },
+  signatureDataUrl: { type: String, default: null }, // base64 data URL from canvas
   status: {
     type: String,
     enum: ["scheduled", "in_progress", "completed", "canceled", "no_show"],
@@ -34,6 +37,8 @@ const VisitSchema = new mongoose.Schema(
     index: true,
   },
     notes: { type: String, trim: true },
+    geofenceNotesClockIn: { type: String, trim: true },
+    geofenceNotesClockOut: { type: String, trim: true },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
   },
