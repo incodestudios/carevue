@@ -9,6 +9,8 @@ import agencyAssignmentsRouter from "./routes/agency.assignments.js";
 import agencyScheduleVisitsRouter from "./routes/agency.schedule.visits.js";
 import agencyStripeWebhook from "./routes/stripe.webhook.js";
 import superAdminRoutes from "./routes/super.admin.js";
+import evvRoutes from "./routes/evvRoutes.js";
+import caregiverEvvRoutes from "./routes/caregiver.evv.js";
 import mongoose from 'mongoose';
 import morgan from 'morgan';
 
@@ -67,6 +69,8 @@ app.use("/api/agency/caregivers", agencyCareGiverRouter);
 app.use("/api/agency/patients", agencyPatientsRouter);
 app.use("/api/agency", agencyAssignmentsRouter);
 app.use("/api/agency/schedule/visits", agencyScheduleVisitsRouter);
+app.use("/api/evv", evvRoutes);
+app.use("/api/caregiver", caregiverEvvRoutes);
 app.use("/api/stripe", agencyStripeWebhook);
 //app.use("/api/users", require("./routes/userRoutes"))
 

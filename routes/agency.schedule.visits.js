@@ -6,6 +6,7 @@ import Visit from "../models/Visit.js";
 import Patient from "../models/Patient.js";
 import User from "../models/User.js";
 import { sendCaregiverScheduleEmail, sendCaregiverNotificationEmail } from "../utils/sendCaregiverScheduleEmail.js";
+import { upsertVisitExceptions } from "../services/evvService.js";
 
 const router = Router();
 
@@ -45,10 +46,12 @@ router.get("/", auth, agencyScope, async (req, res) => {
 
     // Set different limits based on role
     if (req.user.role === "caregiver") {
-      limit = 500;
+      limit = 2000;
     } else {
-      limit = 500;
+      limit = 2000;
     }
+
+    const isAdmin = ADMIN_ROLES.includes(req.user.role);
 
     const q = { agencyId: req.agencyId };
 
@@ -76,6 +79,25 @@ router.get("/", auth, agencyScope, async (req, res) => {
       .populate("patientId", "firstName lastName")
       .populate("caregiverId", "firstName lastName email")
       .lean();
+
+    /*if (isAdmin && items.length) {
+      const now = Date.now();
+      const cutoffMs = 30 * 60 * 1000;
+      const candidates = items.filter((visit) => {
+        const scheduledEnd = visit.scheduledEndAt || visit.endTime;
+        if (!scheduledEnd) return false;
+        const pastDue = now > new Date(scheduledEnd).getTime() + cutoffMs;
+        if (!pastDue) return false;
+        const clockIn = visit.clockInAt || visit.clockInTime;
+        const clockOut = visit.clockOutAt || visit.clockOutTime;
+        return (clockIn && !clockOut) || !clockIn;
+      });
+      if (candidates.length) {
+        await Promise.allSettled(
+          candidates.map((visit) => upsertVisitExceptions(visit, { byUserId: req.user.id }))
+        );
+      }
+    }*/
 
     res.json(items);
     } catch (err) {
@@ -205,8 +227,11 @@ router.post("/", auth, agencyScope, async (req, res) => {
       agencyId: req.agencyId,
       patientId,
       caregiverId,
+      date: dateStr || start.toISOString().slice(0, 10),
       startTime: start,
       endTime: end,
+      scheduledStartAt: start,
+      scheduledEndAt: end,
       title,
       location,
       serviceType,
@@ -214,6 +239,8 @@ router.post("/", auth, agencyScope, async (req, res) => {
       notes,
       clockInTime: clockIn,
       clockOutTime: clockOut,
+      clockInAt: clockIn,
+      clockOutAt: clockOut,
       createdBy: req.user.id,
     });
 
@@ -397,6 +424,8 @@ router.post("/:id/clock", auth, agencyScope, async (req, res) => {
       date,
       clockInLocation,
       clockOutLocation,
+      clockInDistanceM,
+      clockOutDistanceM,
       signatureDataUrl,
     } = req.body || {};
 
@@ -421,14 +450,32 @@ router.post("/:id/clock", auth, agencyScope, async (req, res) => {
     const normalizeLocation = (value) => {
       if (value === undefined) return undefined;
       if (value === null) return null;
-      //const trimmed = value.trim();
-      return value;
+      if (typeof value === "string") return value;
+      if (typeof value === "object") {
+        const lat = Number(value.lat);
+        const lng = Number(value.lng);
+        if (Number.isNaN(lat) || Number.isNaN(lng)) return null;
+        const normalized = { lat, lng };
+        if (value.accuracyM !== undefined) {
+          const accuracyM = Number(value.accuracyM);
+          if (Number.isNaN(accuracyM)) return null;
+          normalized.accuracyM = accuracyM;
+        }
+        return normalized;
+      }
+      return null;
     };
 
     // Only update provided fields
     const update = {};
-    if (clockIn !== undefined) update.clockInTime = clockIn;
-    if (clockOut !== undefined) update.clockOutTime = clockOut;
+    if (clockIn !== undefined) {
+      update.clockInTime = clockIn;
+      update.clockInAt = clockIn;
+    }
+    if (clockOut !== undefined) {
+      update.clockOutTime = clockOut;
+      update.clockOutAt = clockOut;
+    }
     if (note && note.length) { 
        if(!isSafeText(note)) {
          return res.status(400).json({ message: "Invalid note content." });
@@ -458,7 +505,7 @@ router.post("/:id/clock", auth, agencyScope, async (req, res) => {
 
     const normalizedClockInLocation = normalizeLocation(clockInLocation);
     if (normalizedClockInLocation === null) {
-      return res.status(400).json({ message: "Invalid clockInLocation content (must be a string up to 500 chars)." });
+      return res.status(400).json({ message: "Invalid clockInLocation content (must be a string or { lat, lng })." });
     }
     if (normalizedClockInLocation !== undefined) {
       update.clockInLocation = normalizedClockInLocation;
@@ -466,10 +513,26 @@ router.post("/:id/clock", auth, agencyScope, async (req, res) => {
 
     const normalizedClockOutLocation = normalizeLocation(clockOutLocation);
     if (normalizedClockOutLocation === null) {
-      return res.status(400).json({ message: "Invalid clockOutLocation content (must be a string up to 500 chars)." });
+      return res.status(400).json({ message: "Invalid clockOutLocation content (must be a string or { lat, lng })." });
     }
     if (normalizedClockOutLocation !== undefined) {
       update.clockOutLocation = normalizedClockOutLocation;
+    }
+
+    if (clockInDistanceM !== undefined) {
+      const normalized = Number(clockInDistanceM);
+      if (Number.isNaN(normalized)) {
+        return res.status(400).json({ message: "Invalid clockInDistanceM (must be a number)." });
+      }
+      update.clockInDistanceM = normalized;
+    }
+
+    if (clockOutDistanceM !== undefined) {
+      const normalized = Number(clockOutDistanceM);
+      if (Number.isNaN(normalized)) {
+        return res.status(400).json({ message: "Invalid clockOutDistanceM (must be a number)." });
+      }
+      update.clockOutDistanceM = normalized;
     }
 
     if (signatureDataUrl !== undefined) {
@@ -489,6 +552,7 @@ router.post("/:id/clock", auth, agencyScope, async (req, res) => {
       { $set: update },
       { new: true }
     );
+    await upsertVisitExceptions(updated, { byUserId: req.user.id });
     res.json({ message: "Clock-in/out updated", visit: updated });
   } catch (err) {
     // console.error("Error clocking in/out:", err);
