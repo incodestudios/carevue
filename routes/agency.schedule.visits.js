@@ -7,6 +7,7 @@ import Patient from "../models/Patient.js";
 import User from "../models/User.js";
 import { sendCaregiverScheduleEmail, sendCaregiverNotificationEmail } from "../utils/sendCaregiverScheduleEmail.js";
 import { upsertVisitExceptions } from "../services/evvService.js";
+import { createUserNotification } from "../services/notificationService.js";
 
 const router = Router();
 
@@ -46,9 +47,9 @@ router.get("/", auth, agencyScope, async (req, res) => {
 
     // Set different limits based on role
     if (req.user.role === "caregiver") {
-      limit = 2000;
+      limit = 700;
     } else {
-      limit = 2000;
+      limit = 700;
     }
 
     const isAdmin = ADMIN_ROLES.includes(req.user.role);
@@ -80,7 +81,7 @@ router.get("/", auth, agencyScope, async (req, res) => {
       .populate("caregiverId", "firstName lastName email")
       .lean();
 
-    /*if (isAdmin && items.length) {
+    if (isAdmin && items.length) {
       const now = Date.now();
       const cutoffMs = 30 * 60 * 1000;
       const candidates = items.filter((visit) => {
@@ -97,7 +98,95 @@ router.get("/", auth, agencyScope, async (req, res) => {
           candidates.map((visit) => upsertVisitExceptions(visit, { byUserId: req.user.id }))
         );
       }
-    }*/
+    }
+
+    res.json(items);
+    } catch (err) {
+      //console.error("Error listing visits:", err);
+      res.status(500).json({ message: "Server error" });
+    }
+});
+
+// GET /api/agency/schedule/visits/by-date
+// Optional filters: patientId, caregiverId, status, serviceType, date, page, limit
+router.get("/by-date", auth, agencyScope, async (req, res) => {
+  try {
+    let {
+      patientId,
+      caregiverId,
+      status,
+      serviceType,
+      date,
+      page = 1,
+      limit = 10,
+    } = req.query;
+
+    // Set different limits based on role
+    if (req.user.role === "caregiver") {
+      limit = 15;
+    } else {
+      limit = 15;
+    }
+
+    const isAdmin = ADMIN_ROLES.includes(req.user.role);
+
+    const q = { agencyId: req.agencyId };
+
+    // Caregivers can only view their own visits
+    if (req.user.role === "caregiver") {
+      q.caregiverId = req.user.id;
+    } else if (caregiverId && isValidObjectId(caregiverId)) {
+      q.caregiverId = caregiverId;
+    }
+
+    if (patientId && isValidObjectId(patientId)) q.patientId = patientId;
+    if (status) q.status = status;
+    if (serviceType) q.serviceType = serviceType;
+
+    const dateStr = typeof date === "string" && date.trim() ? date.trim() : null;
+    let startDate;
+    if (dateStr) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+        return res.status(400).json({ message: "Invalid date format (YYYY-MM-DD)." });
+      }
+      startDate = new Date(`${dateStr}T00:00:00`);
+      if (Number.isNaN(startDate.getTime())) {
+        return res.status(400).json({ message: "Invalid date format (YYYY-MM-DD)." });
+      }
+    } else {
+      const today = new Date();
+      startDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    }
+    const endDate = new Date(startDate);
+    endDate.setDate(endDate.getDate() + 1);
+    q.startTime = { $gte: startDate, $lt: endDate };
+
+    const items = await Visit.find(q)
+      .sort({ startTime: 1 })
+      .skip((Number(page) - 1) * Number(limit))
+      .limit(Number(limit))
+      .populate("patientId", "firstName lastName")
+      .populate("caregiverId", "firstName lastName email")
+      .lean();
+
+    if (isAdmin && items.length) {
+      const now = Date.now();
+      const cutoffMs = 30 * 60 * 1000;
+      const candidates = items.filter((visit) => {
+        const scheduledEnd = visit.scheduledEndAt || visit.endTime;
+        if (!scheduledEnd) return false;
+        const pastDue = now > new Date(scheduledEnd).getTime() + cutoffMs;
+        if (!pastDue) return false;
+        const clockIn = visit.clockInAt || visit.clockInTime;
+        const clockOut = visit.clockOutAt || visit.clockOutTime;
+        return (clockIn && !clockOut) || !clockIn;
+      });
+      if (candidates.length) {
+        await Promise.allSettled(
+          candidates.map((visit) => upsertVisitExceptions(visit, { byUserId: req.user.id }))
+        );
+      }
+    }
 
     res.json(items);
     } catch (err) {
@@ -256,6 +345,31 @@ router.post("/", auth, agencyScope, async (req, res) => {
       } catch (e) {
        // console.error("Failed to send caregiver schedule email:", e);
       }
+    }
+
+    try {
+      const patientName =
+        patient && (patient.firstName || patient.lastName)
+          ? `${patient.firstName || ""} ${patient.lastName || ""}`.trim()
+          : "patient";
+      await createUserNotification({
+        agencyId: req.agencyId,
+        recipientUserId: caregiverId,
+        type: "SCHEDULE_ASSIGNED",
+        title: "New visit scheduled",
+        body: `New visit with ${patientName} on ${start.toISOString()}.`,
+        payload: {
+          visitId: visit._id,
+          patientId,
+          startTime: start,
+          endTime: end,
+          serviceType: serviceType || null,
+        },
+        senderUserId: req.user.id,
+        visitId: visit._id,
+      });
+    } catch (e) {
+      // console.error("Failed to create schedule notification:", e);
     }
 
     res.status(201).json({visit, message: "Visit created successfully" });

@@ -7,6 +7,7 @@ import {
   getExceptionAudit,
   getSummary,
   listExceptions,
+  listExplanationResponses,
   createManualException,
   deleteException,
   markNotificationRead,
@@ -84,6 +85,15 @@ router.get(
   agencyScope,
   requireRole(...ADMIN_ROLES),
   getExceptionAudit
+);
+
+// GET /api/evv/explanations/responses
+router.get(
+  "/explanations/responses",
+  auth,
+  agencyScope,
+  requireRole(...ADMIN_ROLES),
+  listExplanationResponses
 );
 // DELETE /api/evv/exceptions/:id
 router.delete("/exceptions/:id", auth, agencyScope, requireRole(...ADMIN_ROLES), deleteException);
