@@ -9,6 +9,7 @@ import {
   createAdminNotificationsForNewExceptions,
   getRiskPctForExceptions,
 } from "../services/evvService.js";
+import { createUserNotification } from "../services/notificationService.js";
 
 const ALLOWED_EXCEPTION_TYPES = [
   "LATE_CLOCK_IN",
@@ -318,6 +319,27 @@ export async function requestExplanation(req, res) {
       return updated;
     });
 
+    try {
+      await createUserNotification({
+        agencyId: req.agencyId,
+        recipientUserId: exception.caregiverId,
+        type: "EVV_EXPLANATION_REQUESTED",
+        title: "Explanation requested",
+        body: message ? message : "An explanation was requested for a visit.",
+        payload: {
+          exceptionId: id,
+          visitId: exception.visitId,
+          dueAt: dueAtDate || null,
+          requestedBy: req.user.id,
+        },
+        senderUserId: req.user.id,
+        visitId: exception.visitId,
+        exceptionId: id,
+      });
+    } catch (e) {
+      // console.error("Failed to create explanation notification:", e);
+    }
+
     res.json(result);
   } catch (err) {
     res.status(500).json({ message: "Server error" });
@@ -515,6 +537,74 @@ export async function getExceptionAudit(req, res) {
   }
 }
 
+export async function listExplanationResponses(req, res) {
+  try {
+    const { date, startDate, endDate, page = 1, limit = 50 } = req.query;
+    const startParam = startDate;
+    const endParam = endDate;
+    const hasRange = !!(startParam || endParam);
+
+    const q = {
+      agencyId: req.agencyId,
+      "explanationRequest.status": "received",
+      "explanationRequest.response": { $ne: null },
+    };
+
+    if (date && hasRange) {
+      return res
+        .status(400)
+        .json({ message: "Use date or startDate/endDate, not both." });
+    }
+    if (hasRange) {
+      const startRange = startParam ? getDateRange(startParam) : null;
+      const endRange = endParam ? getDateRange(endParam) : null;
+      if ((startParam && !startRange) || (endParam && !endRange)) {
+        return res
+          .status(400)
+          .json({ message: "Invalid date format (YYYY-MM-DD)." });
+      }
+      if (startRange && endRange && endRange.start < startRange.start) {
+        return res
+          .status(400)
+          .json({ message: "endDate must be on or after startDate." });
+      }
+      q["explanationRequest.response.respondedAt"] = {
+        ...(startRange ? { $gte: startRange.start } : {}),
+        ...(endRange ? { $lt: endRange.end } : {}),
+      };
+    } else if (date) {
+      const range = getDateRange(date);
+      if (!range) {
+        return res.status(400).json({ message: "Invalid date format (YYYY-MM-DD)." });
+      }
+      q["explanationRequest.response.respondedAt"] = {
+        $gte: range.start,
+        $lt: range.end,
+      };
+    }
+
+    const pageNum = Math.max(1, Number(page) || 1);
+    const limitNum = Math.min(100, Math.max(1, Number(limit) || 50));
+    const total = await EVVException.countDocuments(q);
+
+    const items = await EVVException.find(q)
+      .sort({ "explanationRequest.response.respondedAt": -1 })
+      .skip((pageNum - 1) * limitNum)
+      .limit(limitNum)
+      .populate("caregiverId", "firstName lastName email")
+      .populate("clientId", "firstName lastName")
+      .populate(
+        "visitId",
+        "startTime endTime patientId caregiverId status scheduledStartAt scheduledEndAt"
+      )
+      .lean();
+
+    res.json({ page: pageNum, limit: limitNum, total, items });
+  } catch (err) {
+    res.status(500).json({ message: "Server error" });
+  }
+}
+
 export async function respondToExplanation(req, res) {
   try {
     const { exceptionId } = req.params;
@@ -576,6 +666,18 @@ export async function respondToExplanation(req, res) {
 
       return updated;
     });
+
+    await Notification.updateMany(
+      {
+        agencyId: req.agencyId,
+        recipientType: "user",
+        recipientUserId: req.user.id,
+        type: "EVV_EXPLANATION_REQUESTED",
+        exceptionId: exceptionId,
+        status: "unread",
+      },
+      { $set: { status: "read", readAt: new Date() } }
+    );
 
     res.json(result);
   } catch (err) {
@@ -854,7 +956,7 @@ export async function markNotificationRead(req, res) {
 
     const updated = await Notification.findOneAndUpdate(
       { _id: id, agencyId: req.agencyId },
-      { $set: { readAt: new Date() } },
+      { $set: { status: "read", readAt: new Date() } },
       { new: true }
     ).lean();
 
