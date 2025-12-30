@@ -19,6 +19,12 @@ const ALLOWED_EXCEPTION_TYPES = [
   "MISSED_VISIT",
   "MANUAL_OVERRIDE",
 ];
+const DEFAULT_LIST_ALL_EXCEPTION_TYPES = [
+  "MISSED_VISIT",
+  "LATE_CLOCK_IN",
+  "OUTSIDE_GEOFENCE_CLOCK_OUT",
+  "OUTSIDE_GEOFENCE_CLOCK_IN",
+];
 
 function isValidObjectId(id) {
   return !!id && mongoose.Types.ObjectId.isValid(id);
@@ -124,6 +130,108 @@ export async function listExceptions(req, res) {
     if (status) q.status = status;
     if (type) {
       const typeFilter = normalizeTypeFilter(type);
+      if (typeFilter?.error) {
+        return res.status(400).json({ message: typeFilter.error });
+      }
+      if (typeFilter?.types?.length === 1) {
+        q.type = typeFilter.types[0];
+      } else if (typeFilter?.types?.length) {
+        q.type = { $in: typeFilter.types };
+      }
+    }
+    if (caregiverId) {
+      if (!isValidObjectId(caregiverId)) {
+        return res.status(400).json({ message: "Invalid caregiverId." });
+      }
+      q.caregiverId = caregiverId;
+    }
+    if (clientId) {
+      if (!isValidObjectId(clientId)) {
+        return res.status(400).json({ message: "Invalid clientId." });
+      }
+      q.clientId = clientId;
+    }
+
+    const pageNum = Math.max(1, Number(page) || 1);
+    const limitNum = Math.min(100, Math.max(1, Number(limit) || 50));
+    const total = await EVVException.countDocuments(q);
+
+    const items = await EVVException.find(q)
+      .sort({ severityRank: -1, occurredAt: -1 })
+      .skip((pageNum - 1) * limitNum)
+      .limit(limitNum)
+      .populate(
+        "visitId",
+        "startTime endTime patientId caregiverId status billingRateCents scheduledStartAt scheduledEndAt clockInTime clockOutTime clockInAt clockOutAt evvStatus"
+      )
+      .lean();
+
+    res.json({
+      page: pageNum,
+      limit: limitNum,
+      total,
+      items,
+    });
+  } catch (err) {
+    res.status(500).json({ message: "Server error" });
+  }
+}
+
+export async function listAllExceptions(req, res) {
+  try {
+    const {
+      date,
+      startDate,
+      endDate,
+      startdate,
+      enddate,
+      status,
+      type,
+      caregiverId,
+      clientId,
+      page = 1,
+      limit = 50,
+    } = req.query;
+    const typeParam = type || DEFAULT_LIST_ALL_EXCEPTION_TYPES.join(",");
+
+    const q = { agencyId: req.agencyId };
+    const startParam = startDate || startdate;
+    const endParam = endDate || enddate;
+    const hasRange = !!(startParam || endParam);
+    if (date && hasRange) {
+      return res
+        .status(400)
+        .json({ message: "Use date or startDate/endDate, not both." });
+    }
+    if (hasRange) {
+      const startRange = startParam ? getDateRange(startParam) : null;
+      const endRange = endParam ? getDateRange(endParam) : null;
+      if ((startParam && !startRange) || (endParam && !endRange)) {
+        return res
+          .status(400)
+          .json({ message: "Invalid date format (YYYY-MM-DD)." });
+      }
+      if (startRange && endRange && endRange.start < startRange.start) {
+        return res
+          .status(400)
+          .json({ message: "endDate must be on or after startDate." });
+      }
+      q.occurredAt = {
+        ...(startRange ? { $gte: startRange.start } : {}),
+        ...(endRange ? { $lt: endRange.end } : {}),
+      };
+    } else {
+      const range = getDateRange(date);
+      if (date && !range) {
+        return res.status(400).json({ message: "Invalid date format (YYYY-MM-DD)." });
+      }
+      if (range) {
+        q.occurredAt = { $gte: range.start, $lt: range.end };
+      }
+    }
+    if (status) q.status = status;
+    if (typeParam) {
+      const typeFilter = normalizeTypeFilter(typeParam);
       if (typeFilter?.error) {
         return res.status(400).json({ message: typeFilter.error });
       }

@@ -123,9 +123,9 @@ router.get("/by-date", auth, agencyScope, async (req, res) => {
 
     // Set different limits based on role
     if (req.user.role === "caregiver") {
-      limit = 15;
+      limit = 50;
     } else {
-      limit = 15;
+      limit = 50;
     }
 
     const isAdmin = ADMIN_ROLES.includes(req.user.role);

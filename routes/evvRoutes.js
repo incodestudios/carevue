@@ -7,6 +7,7 @@ import {
   getExceptionAudit,
   getSummary,
   listExceptions,
+  listAllExceptions,
   listExplanationResponses,
   createManualException,
   deleteException,
@@ -65,6 +66,9 @@ const OVERRIDE_APPROVER_ROLES = [
 
 // GET /api/evv/exceptions
 router.get("/exceptions", auth, agencyScope, requireRole(...ADMIN_ROLES), listExceptions);
+
+// GET /api/evv/exceptions/all
+router.get("/exceptions/all", auth, agencyScope, requireRole(...ADMIN_ROLES), listAllExceptions);
 
 // POST /api/evv/exceptions/manual
 router.post(
