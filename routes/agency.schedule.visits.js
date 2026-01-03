@@ -3,10 +3,13 @@ import mongoose from "mongoose";
 import auth from "../middlewares/auth.js";
 import agencyScope from "../middlewares/agencyScope.js";
 import Visit from "../models/Visit.js";
+import VisitPlan from "../models/VisitPlan.js";
+import VisitActual from "../models/VisitActual.js";
 import Patient from "../models/Patient.js";
 import User from "../models/User.js";
 import { sendCaregiverScheduleEmail, sendCaregiverNotificationEmail } from "../utils/sendCaregiverScheduleEmail.js";
 import { upsertVisitExceptions } from "../services/evvService.js";
+import { handleClockOut } from "../services/evvWorkflow.js";
 import { createUserNotification } from "../services/notificationService.js";
 
 const router = Router();
@@ -47,9 +50,9 @@ router.get("/", auth, agencyScope, async (req, res) => {
 
     // Set different limits based on role
     if (req.user.role === "caregiver") {
-      limit = 700;
+      limit = 900;
     } else {
-      limit = 700;
+      limit = 900;
     }
 
     const isAdmin = ADMIN_ROLES.includes(req.user.role);
@@ -667,6 +670,72 @@ router.post("/:id/clock", auth, agencyScope, async (req, res) => {
       { new: true }
     );
     await upsertVisitExceptions(updated, { byUserId: req.user.id });
+
+    if (clockOut !== undefined) {
+      const scheduledStartUtc = updated.scheduledStartAt || updated.startTime;
+      const scheduledEndUtc = updated.scheduledEndAt || updated.endTime;
+      const expectedServiceLocation = updated.location
+        ? { address: updated.location }
+        : undefined;
+      await VisitPlan.findByIdAndUpdate(
+        updated._id,
+        {
+          $set: {
+            agencyId: updated.agencyId,
+            scheduledStartUtc,
+            scheduledEndUtc,
+            caregiverId: updated.caregiverId,
+            patientId: updated.patientId,
+            payerProgram: updated.payerProgram,
+            serviceCode: updated.serviceType,
+            procedureCode: updated.procedureCode,
+            expectedServiceLocation,
+          },
+        },
+        { upsert: true, new: true }
+      );
+
+      const hasGpsLocation = (value) =>
+        value &&
+        typeof value === "object" &&
+        typeof value.lat === "number" &&
+        typeof value.lng === "number";
+      const captureMethod =
+        hasGpsLocation(normalizedClockInLocation) || hasGpsLocation(normalizedClockOutLocation)
+          ? "GPS"
+          : "Manual";
+
+      await VisitActual.findOneAndUpdate(
+        { visitId: updated._id },
+        {
+          $set: {
+            agencyId: updated.agencyId,
+            visitId: updated._id,
+            actualStartUtc: updated.clockInAt || updated.clockInTime,
+            actualEndUtc: updated.clockOutAt || updated.clockOutTime,
+            captureMethod,
+            manualEditFlag: false,
+          },
+        },
+        { upsert: true, new: true }
+      );
+
+      const clockOutGeo = hasGpsLocation(normalizedClockOutLocation)
+        ? {
+            lat: normalizedClockOutLocation.lat,
+            lng: normalizedClockOutLocation.lng,
+            accuracy: normalizedClockOutLocation.accuracyM,
+          }
+        : undefined;
+
+      await handleClockOut({
+        agencyId: updated.agencyId,
+        visitId: updated._id,
+        timestampUtc: updated.clockOutAt || updated.clockOutTime || clockOut,
+        source: req.user.role === "caregiver" ? "caregiver" : "admin",
+        geo: clockOutGeo,
+      });
+    }
     res.json({ message: "Clock-in/out updated", visit: updated });
   } catch (err) {
     // console.error("Error clocking in/out:", err);

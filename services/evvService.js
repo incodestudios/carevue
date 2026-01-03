@@ -155,7 +155,7 @@ export async function createAdminNotificationsForNewExceptions(exceptions) {
   const notifications = [];
   for (const exception of exceptions) {
     const title = "EVV exception detected";
-    const body = `${exception.type.replace(/_/g, " ")} for visit ${exception.visitId}`;
+    const body = `${exception.type.replace(/_/g, " ")} for visit ${exception.message}`;
     notifications.push(
       {
         agencyId: exception.agencyId,
