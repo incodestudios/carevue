@@ -18,6 +18,9 @@ import {
   setBillingStatus,
   assignOwner,
   resolveException,
+  submitVisitForAdjudication,
+  getVisitAdjudication,
+  getVisitCompliance,
 } from "../controllers/evvController.js";
 import {
   addOverrideAttachment,
@@ -158,6 +161,33 @@ router.post(
 
 // GET /api/evv/summary
 router.get("/summary", auth, agencyScope, requireRole(...ADMIN_ROLES), getSummary);
+
+// POST /api/evv/visits/:id/submit
+router.post(
+  "/visits/:id/submit",
+  auth,
+  agencyScope,
+  requireRole(...ADMIN_ROLES),
+  submitVisitForAdjudication
+);
+
+// GET /api/evv/visits/:id/adjudication
+router.get(
+  "/visits/:id/adjudication",
+  auth,
+  agencyScope,
+  requireRole(...ADMIN_ROLES),
+  getVisitAdjudication
+);
+
+// GET /api/evv/visits/:id/compliance
+router.get(
+  "/visits/:id/compliance",
+  auth,
+  agencyScope,
+  requireRole(...ADMIN_ROLES),
+  getVisitCompliance
+);
 
 // PATCH /api/evv/notifications/:id/read
 router.patch(

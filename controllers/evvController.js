@@ -4,12 +4,17 @@ import EVVExceptionAudit from "../models/EVVExceptionAudit.js";
 import Notification from "../models/Notification.js";
 import User from "../models/User.js";
 import Visit from "../models/Visit.js";
+import VisitPlan from "../models/VisitPlan.js";
+import AdjudicationSubmission from "../models/AdjudicationSubmission.js";
+import ComplianceEvaluation from "../models/ComplianceEvaluation.js";
 import {
   calculateVisitValueCents,
   createAdminNotificationsForNewExceptions,
   getRiskPctForExceptions,
 } from "../services/evvService.js";
 import { createUserNotification } from "../services/notificationService.js";
+import { enqueueVisitSubmission } from "../queues/evvSubmissionQueue.js";
+import { computePredictiveComplianceScore } from "../services/complianceEngine.js";
 
 const ALLOWED_EXCEPTION_TYPES = [
   "LATE_CLOCK_IN",
@@ -74,6 +79,13 @@ function getDateRange(dateStr) {
   const end = new Date(start);
   end.setDate(end.getDate() + 1);
   return { start, end };
+}
+
+function normalizeAdjudicator(value) {
+  if (!value) return "HHAX";
+  const normalized = String(value).toUpperCase();
+  if (normalized === "HHAX" || normalized === "SANDATA") return normalized;
+  return null;
 }
 
 export async function listExceptions(req, res) {
@@ -1161,6 +1173,98 @@ export async function getSummary(req, res) {
       visitsAtRisk,
       totalVisits,
     });
+  } catch (err) {
+    res.status(500).json({ message: "Server error" });
+  }
+}
+
+export async function submitVisitForAdjudication(req, res) {
+  try {
+    const { id } = req.params;
+    if (!isValidObjectId(id)) return res.status(400).json({ message: "Invalid id" });
+
+    const adjudicator = normalizeAdjudicator(req.body?.adjudicator || req.query?.adjudicator);
+    if (!adjudicator) {
+      return res.status(400).json({ message: "Invalid adjudicator" });
+    }
+
+    const visitPlan = await VisitPlan.findOne({ _id: id, agencyId: req.agencyId }).lean();
+    if (!visitPlan) {
+      const visit = await Visit.findOne({ _id: id, agencyId: req.agencyId }).lean();
+      if (!visit) return res.status(404).json({ message: "Visit not found" });
+
+      await VisitPlan.findByIdAndUpdate(
+        id,
+        {
+          $set: {
+            agencyId: visit.agencyId,
+            scheduledStartUtc: visit.scheduledStartAt || visit.startTime,
+            scheduledEndUtc: visit.scheduledEndAt || visit.endTime,
+            caregiverId: visit.caregiverId,
+            patientId: visit.patientId,
+            payerProgram: visit.payerProgram,
+            serviceCode: visit.serviceType,
+            procedureCode: visit.procedureCode,
+            expectedServiceLocation: visit.location
+              ? { address: visit.location }
+              : undefined,
+          },
+        },
+        { upsert: true }
+      );
+    }
+
+    await enqueueVisitSubmission({ visitId: id, adjudicator });
+    res.json({ success: true, queued: true, adjudicator });
+  } catch (err) {
+    res.status(500).json({ message: "Server error" });
+  }
+}
+
+export async function getVisitAdjudication(req, res) {
+  try {
+    const { id } = req.params;
+    if (!isValidObjectId(id)) return res.status(400).json({ message: "Invalid id" });
+
+    const adjudicator = normalizeAdjudicator(req.query?.adjudicator);
+    if (!adjudicator) {
+      return res.status(400).json({ message: "Invalid adjudicator" });
+    }
+
+    const submission = await AdjudicationSubmission.findOne({
+      agencyId: req.agencyId,
+      visitId: id,
+      adjudicator,
+    })
+      .sort({ submittedAt: -1 })
+      .lean();
+
+    res.json({ submission: submission || null });
+  } catch (err) {
+    res.status(500).json({ message: "Server error" });
+  }
+}
+
+export async function getVisitCompliance(req, res) {
+  try {
+    const { id } = req.params;
+    if (!isValidObjectId(id)) return res.status(400).json({ message: "Invalid id" });
+
+    let evaluation = await ComplianceEvaluation.findOne({
+      agencyId: req.agencyId,
+      visitId: id,
+    })
+      .sort({ calculatedAt: -1 })
+      .lean();
+
+    if (!evaluation) {
+      const computed = await computePredictiveComplianceScore(id, {
+        agencyId: req.agencyId,
+      });
+      evaluation = computed?.record || computed || null;
+    }
+
+    res.json({ evaluation });
   } catch (err) {
     res.status(500).json({ message: "Server error" });
   }

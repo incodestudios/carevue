@@ -6,6 +6,7 @@ import {
   listNotifications,
   listRoleNotifications,
   markNotificationRead,
+  markRoleNotificationRead,
 } from "../controllers/notificationController.js";
 
 const router = Router();
@@ -33,5 +34,14 @@ router.get("/role", auth, agencyScope, requireRole(...ADMIN_ROLES), listRoleNoti
 
 // PATCH /api/notifications/:id/read
 router.patch("/:id/read", auth, agencyScope, requireRole(...ALL_ROLES), markNotificationRead);
+
+// PATCH /api/notifications/role/:id/read
+router.patch(
+  "/role/:id/read",
+  auth,
+  agencyScope,
+  requireRole(...ADMIN_ROLES),
+  markRoleNotificationRead
+);
 
 export default router;

@@ -6,8 +6,13 @@ dotenv.config({ silent: true });
 // Import the configured app after env vars are loaded so any module
 // that depends on process.env (like Stripe initialization) sees values.
 const { default: app } = await import('./server.js');
+const { startEvvSubmissionWorker } = await import('./queues/evvSubmissionQueue.js');
 
 const PORT = process.env.PORT || 3000;
+
+if (process.env.EVV_WORKER === "1") {
+  startEvvSubmissionWorker();
+}
 
 // Start the server
 app.listen(PORT, () => {
