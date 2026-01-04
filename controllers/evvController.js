@@ -725,6 +725,92 @@ export async function listExplanationResponses(req, res) {
   }
 }
 
+export async function listCaregiverExplanationRequests(req, res) {
+  try {
+    const { status, date, startDate, endDate, page = 1, limit = 50 } = req.query;
+    const startParam = startDate;
+    const endParam = endDate;
+    const hasRange = !!(startParam || endParam);
+
+    const allowedStatuses = ["requested", "overdue", "received", "none"];
+    const statusList = status
+      ? String(status)
+          .split(",")
+          .map((value) => value.trim())
+          .filter(Boolean)
+      : ["requested", "overdue"];
+
+    const invalidStatuses = statusList.filter((value) => !allowedStatuses.includes(value));
+    if (invalidStatuses.length) {
+      return res
+        .status(400)
+        .json({ message: `Invalid status: ${invalidStatuses.join(", ")}` });
+    }
+
+    const q = {
+      agencyId: req.agencyId,
+      caregiverId: req.user.id,
+    };
+    if (statusList.length === 1) {
+      q["explanationRequest.status"] = statusList[0];
+    } else if (statusList.length) {
+      q["explanationRequest.status"] = { $in: statusList };
+    }
+
+    if (date && hasRange) {
+      return res
+        .status(400)
+        .json({ message: "Use date or startDate/endDate, not both." });
+    }
+    if (hasRange) {
+      const startRange = startParam ? getDateRange(startParam) : null;
+      const endRange = endParam ? getDateRange(endParam) : null;
+      if ((startParam && !startRange) || (endParam && !endRange)) {
+        return res
+          .status(400)
+          .json({ message: "Invalid date format (YYYY-MM-DD)." });
+      }
+      if (startRange && endRange && endRange.start < startRange.start) {
+        return res
+          .status(400)
+          .json({ message: "endDate must be on or after startDate." });
+      }
+      q["explanationRequest.requestedAt"] = {
+        ...(startRange ? { $gte: startRange.start } : {}),
+        ...(endRange ? { $lt: endRange.end } : {}),
+      };
+    } else if (date) {
+      const range = getDateRange(date);
+      if (!range) {
+        return res.status(400).json({ message: "Invalid date format (YYYY-MM-DD)." });
+      }
+      q["explanationRequest.requestedAt"] = {
+        $gte: range.start,
+        $lt: range.end,
+      };
+    }
+
+    const pageNum = Math.max(1, Number(page) || 1);
+    const limitNum = Math.min(100, Math.max(1, Number(limit) || 50));
+    const total = await EVVException.countDocuments(q);
+
+    const items = await EVVException.find(q)
+      .sort({ "explanationRequest.requestedAt": -1 })
+      .skip((pageNum - 1) * limitNum)
+      .limit(limitNum)
+      .populate("clientId", "firstName lastName")
+      .populate(
+        "visitId",
+        "startTime endTime patientId caregiverId status scheduledStartAt scheduledEndAt"
+      )
+      .lean();
+
+    res.json({ page: pageNum, limit: limitNum, total, items });
+  } catch (err) {
+    res.status(500).json({ message: "Server error" });
+  }
+}
+
 export async function respondToExplanation(req, res) {
   try {
     const { exceptionId } = req.params;
